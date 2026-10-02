@@ -33,13 +33,14 @@ and connect to the engine control unit.
 """
 
 import argparse
-import errno
+import fcntl
 import math
 import os
 import select
 import signal
 import subprocess
 import sys
+import termios
 import time
 import tty
 
@@ -330,7 +331,6 @@ def main():
 	master_fd, slave_fd = os.openpty()
 	tty.setraw(slave_fd)
 	slave_name = os.ttyname(slave_fd)
-	os.close(slave_fd)	# FreeSSM opens the port exclusively (TIOCEXCL)
 
 	port = slave_name
 	linked = False
@@ -348,15 +348,10 @@ def main():
 	last_count = 0
 	try:
 		while True:
-			readable, _, _ = select.select([master_fd], [], [], 1.0)
+			readable, _, _ = select.select([master_fd], [], [], 0.05)
+			fcntl.ioctl(slave_fd, termios.TIOCNXCL)	# FreeSSM sets TIOCEXCL, which outlives its close on a pseudo-terminal
 			if readable:
-				try:
-					data = os.read(master_fd, 4096)
-				except OSError as e:
-					if e.errno != errno.EIO:
-						raise
-					time.sleep(0.1)	# port is currently not opened by FreeSSM
-					data = b""
+				data = os.read(master_fd, 4096)
 				if data:
 					ecu.feed(data)
 			now = time.monotonic()
@@ -370,6 +365,7 @@ def main():
 	finally:
 		if linked:
 			remove_link(args.link, slave_name)
+		os.close(slave_fd)
 		os.close(master_fd)
 
 
